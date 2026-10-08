@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Language Translation Tool</title>
+<style>
+  :root {
+    --bg: #eef2f1; --panel: #ffffff; --ink: #14302b; --muted: #5d7570;
+    --line: #cfdad7; --accent: #0f766e; --accent-ink: #ffffff; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1a18; --panel: #15261f; --ink: #e4f0ec; --muted: #8fa9a2;
+      --line: #2a403a; --accent: #3fc1b0; --accent-ink: #06201b; --err: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex; justify-content: center; padding: 32px 16px;
+  }
+  main { width: 100%; max-width: 860px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p.sub { margin: 0 0 24px; color: var(--muted); }
+  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+  select, button, textarea { font: inherit; color: inherit; }
+  select {
+    flex: 1; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--panel);
+  }
+  button {
+    cursor: pointer; border: 1px solid var(--line); background: var(--panel);
+    border-radius: 8px; padding: 9px 14px;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  button.primary {
+    background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+    font-weight: 600; padding: 11px 22px;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .pane {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    display: flex; flex-direction: column; min-height: 260px;
+  }
+  textarea, .out {
+    flex: 1; border: 0; background: transparent; resize: none; padding: 16px;
+    font-size: 1.05rem; line-height: 1.55; width: 100%;
+  }
+  textarea:focus { outline: none; }
+  .out { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .out.placeholder { color: var(--muted); }
+  .out.error { color: var(--err); }
+  .foot {
+    display: flex; gap: 8px; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-top: 1px solid var(--line); color: var(--muted);
+    font-size: .85rem;
+  }
+  .foot .tools { display: flex; gap: 6px; }
+  .foot button { padding: 5px 10px; font-size: .85rem; }
+  .actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+  @media (max-width: 640px) {
+    .panes { grid-template-columns: 1fr; }
+    .bar { flex-wrap: wrap; }
+    select { min-width: 40%; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Language Translation Tool</h1>
+  <p class="sub">Type or paste text, choose the languages, and translate.</p>
+
+  <div class="bar">
+    <select id="source" aria-label="Source language"></select>
+    <button id="swap" title="Swap languages" aria-label="Swap languages">⇄</button>
+    <select id="target" aria-label="Target language"></select>
+  </div>
+
+  <div class="panes">
+    <section class="pane">
+      <textarea id="input" maxlength="500" placeholder="Enter text to translate" aria-label="Text to translate"></textarea>
+      <div class="foot">
+        <span id="count">0 / 500</span>
+        <span class="tools">
+          <button id="speakIn">Listen</button>
+          <button id="clear">Clear</button>
+        </span>
+      </div>
+    </section>
+    <section class="pane">
+      <div id="output" class="out placeholder" aria-live="polite">Translation appears here</div>
+      <div class="foot">
+        <span id="status"></span>
+        <span class="tools">
+          <button id="speakOut" disabled>Listen</button>
+          <button id="copy" disabled>Copy</button>
+        </span>
+      </div>
+    </section>
+  </div>
+
+  <div class="actions">
+    <button id="go" class="primary">Translate</button>
+  </div>
+</main>
+
+<script>
+const LANGS = {
+  en: "English", hi: "Hindi", ur: "Urdu", bn: "Bengali", ta: "Tamil", te: "Telugu",
+  mr: "Marathi", gu: "Gujarati", pa: "Punjabi", es: "Spanish", fr: "French",
+  de: "German", it: "Italian", pt: "Portuguese", ru: "Russian", ar: "Arabic",
+  zh: "Chinese", ja: "Japanese", ko: "Korean", tr: "Turkish", nl: "Dutch"
+};
+// BCP-47 tags for speech synthesis
+const VOICE = { zh: "zh-CN", pt: "pt-PT" };
+
+const $ = id => document.getElementById(id);
+const source = $("source"), target = $("target"), input = $("input"),
+      output = $("output"), statusEl = $("status"), goBtn = $("go"),
+      copyBtn = $("copy"), speakOutBtn = $("speakOut");
+
+for (const [code, name] of Object.entries(LANGS)) {
+  source.add(new Option(name, code));
+  target.add(new Option(name, code));
+}
+source.value = "en";
+target.value = "hi";
+
+function show(text, cls) {
+  output.textContent = text;
+  output.className = "out" + (cls ? " " + cls : "");
+}
+
+async function translate() {
+  const text = input.value.trim();
+  if (!text) { show("Enter some text first.", "error"); return; }
+  if (source.value === target.value) { show(text); enableOutput(true); return; }
+
+  goBtn.disabled = true;
+  statusEl.textContent = "Translating…";
+  try {
+    const url = "https://api.mymemory.translated.net/get?q=" +
+      encodeURIComponent(text) + "&langpair=" + source.value + "|" + target.value;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Server returned " + res.status);
+    const data = await res.json();
+    if (data.responseStatus !== 200) throw new Error(data.responseDetails || "Translation failed");
+    show(data.responseData.translatedText);
+    enableOutput(true);
+    statusEl.textContent = "Done";
+  } catch (err) {
+    show("Could not translate: " + err.message + ". Check your connection and try again.", "error");
+    enableOutput(false);
+    statusEl.textContent = "";
+  } finally {
+    goBtn.disabled = false;
+  }
+}
+
+function enableOutput(on) { copyBtn.disabled = !on; speakOutBtn.disabled = !on; }
+
+function speak(text, lang) {
+  if (!("speechSynthesis" in window)) { alert("Text-to-speech is not supported in this browser."); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = VOICE[lang] || lang;
+  speechSynthesis.speak(u);
+}
+
+goBtn.onclick = translate;
+input.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) translate(); });
+input.addEventListener("input", () => { $("count").textContent = input.value.length + " / 500"; });
+
+$("swap").onclick = () => {
+  [source.value, target.value] = [target.value, source.value];
+  if (!copyBtn.disabled) { input.value = output.textContent; input.dispatchEvent(new Event("input")); }
+  show("Translation appears here", "placeholder");
+  enableOutput(false);
+};
+$("clear").onclick = () => {
+  input.value = ""; input.dispatchEvent(new Event("input"));
+  show("Translation appears here", "placeholder"); enableOutput(false); statusEl.textContent = "";
+};
+copyBtn.onclick = async () => {
+  try { await navigator.clipboard.writeText(output.textContent); statusEl.textContent = "Copied"; }
+  catch { statusEl.textContent = "Copy failed"; }
+};
+$("speakIn").onclick = () => input.value.trim() && speak(input.value, source.value);
+speakOutBtn.onclick = () => speak(output.textContent, target.value);
+</script>
+</body>
+</html>
